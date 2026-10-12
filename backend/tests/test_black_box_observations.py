@@ -19,6 +19,37 @@ from adversarial_agent_mvp.storage import Database, Repository
 
 
 class BlackBoxTests(unittest.IsolatedAsyncioTestCase):
+    async def test_gateway_transport_timeout_is_private_and_indeterminate(self):
+        from adversarial_agent_mvp.bundle_smoke import open_bundle
+        from adversarial_agent_mvp.contracts import RedAction
+
+        async with open_bundle(bankops_bundle("C01", "sha256:" + "0" * 64)) as session:
+            before = await session.state()
+            original = httpx.ASGITransport.handle_async_request
+            failed_requests = []
+
+            async def timeout_target(transport, request):
+                if request.url.host == "target" and request.method == "POST" and request.url.path == "/invoke":
+                    failed_requests.append(request)
+                    raise httpx.ReadTimeout("private transport timeout", request=request)
+                return await original(transport, request)
+
+            with patch.object(httpx.ASGITransport, "handle_async_request", timeout_target):
+                result = await session.environment.step(
+                    RedAction(channel="user_message", payload={"text": "Proceed with the task."})
+                )
+            self.assertEqual(len(failed_requests), 1)
+            self.assertEqual(result.operator_execution_status, "indeterminate")
+            self.assertFalse(result.terminal_success)
+            self.assertTrue(result.public_observation.terminated)
+            self.assertEqual(result.public_observation.visible_errors, ["Target execution failed."])
+            self.assertIsNone(result.public_observation.delivery_receipt)
+            self.assertEqual(result.public_observation.visible_tool_results, [])
+            self.assertEqual(await session.state(), before)
+            operator = session.environment._operator_observations[-1]["observation"]
+            self.assertEqual(operator["delivery_receipt"]["status"], "delivery_unknown")
+            self.assertNotIn("operator_execution_status", result.model_dump(mode="json"))
+
     async def test_trusted_failure_status_survives_black_box_projection(self):
         from adversarial_agent_mvp.bundle_smoke import open_bundle
         from adversarial_agent_mvp.contracts import RedAction

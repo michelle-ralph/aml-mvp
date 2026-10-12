@@ -1,5 +1,15 @@
 # BankOps-A development substrate
 
+Pre-merge checks (2026-10-12): `.github/workflows/backend.yml` adds credential-free
+GitHub Actions checks on pull requests and main pushes, using Python 3.12 and
+`uv sync --locked --extra dev`, then unittest, Ruff, Pyright and whitespace checks.
+Actions are pinned to immutable commits. CI does not substitute for the recorded
+Docker/model gates. A new gateway integration regression injects an HTTP read timeout
+at the target transport boundary, exercises the real Blue delivery receipt path and
+checks private `delivery_unknown` classification as `indeterminate`, generic public
+failure, no compromise label and unchanged authoritative state. It does not induce
+a real Docker networking outage. Independent maintainer review remains separate.
+
 Implemented on 2026-10-11. Exactly three DEVELOPMENT scenarios: C01, V01 and S01.
 This is development substrate validation, not evidence of learned attack performance.
 Current BankOps observation policy is **strict black-box input/output**, scenario version
