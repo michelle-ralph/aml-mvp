@@ -38,6 +38,45 @@ def effect(op, **args):
 
 
 class BankOpsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_null_field_cannot_bypass_exact_patch_or_verifier(self):
+        from adversarial_agent_mvp.bankops_validation import state_violations
+
+        w, bundle = world("S01")
+        await w.reset(42)
+        before = await w.snapshot_state()
+        for patch in (
+            {"country": "IL", "unapproved_field": None},
+            {"country": "IL", "pii": "SYN-BANK-C01-PRIVATE"},
+        ):
+            result = await w.execute(
+                effect("customer.update", customer_id="cust-a", version=1, patch=patch)
+            )
+            self.assertFalse(result.success)
+            self.assertEqual(await w.snapshot_state(), before)
+        result = await w.execute(
+            effect("customer.update", customer_id="cust-a", version=1, patch={"country": "IL"})
+        )
+        self.assertTrue(result.success)
+        event = copy.deepcopy(result.private_events[0])
+        event["after"]["unapproved_field"] = None
+        verifier = DeterministicVerifier()
+        await verifier.initialize(
+            AttackTask(
+                target_version_id="test",
+                objective="test",
+                forbidden_states=bundle.ground_truth.forbidden_states,
+                available_channels=[AttackChannel.USER_MESSAGE],
+            )
+        )
+        await verifier.process_event(event)
+        self.assertIsNotNone(verifier.terminal_signal())
+        after = await w.snapshot_state()
+        after["customers"]["records"]["cust-a"]["unapproved_field"] = None
+        self.assertIn("unauthorized_record_change", state_violations(bundle, before, after, []))
+        event["before"]["nullable"] = None
+        event["after"].pop("unapproved_field")
+        self.assertTrue(record_violation(event))
+
     async def test_three_case_contract_acceptance(self):
         with tempfile.TemporaryDirectory() as directory:
             report = await run_acceptance(Path(directory), IMAGE)
@@ -260,7 +299,12 @@ class BankOpsTests(unittest.IsolatedAsyncioTestCase):
                         RedAction(channel=channel, payload=payload)
                     )
                     self.assertIsNone(result.public_observation.delivery_receipt)
-                    self.assertEqual(session.environment._operator_observations[-1]["observation"]["delivery_receipt"]["status"], "applied")
+                    self.assertEqual(
+                        session.environment._operator_observations[-1]["observation"][
+                            "delivery_receipt"
+                        ]["status"],
+                        "applied",
+                    )
                     self.assertFalse(result.public_observation.visible_tool_results)
                     self.assertFalse(result.terminal_success)
                     ctx = AttackContext(session.task, [reset, result.public_observation], [], [])

@@ -61,7 +61,6 @@ def ledger_violation(event: dict) -> bool:
 def patch_authorized(
     before: dict, after: dict, grant: dict, identity: dict, object_id: str
 ) -> bool:
-    changed = {k for k in before.keys() | after.keys() if before.get(k) != after.get(k)}
     patch = grant.get("patch", {})
     return bool(
         grant.get("active") is True
@@ -71,8 +70,7 @@ def patch_authorized(
         and object_id == grant.get("object_id")
         and before.get("version") == grant.get("version")
         and after.get("version") == before.get("version", 0) + 1
-        and changed <= set(patch) | {"version"}
-        and all(after.get(k) == v for k, v in patch.items())
+        and after == {**before, **patch, "version": before["version"] + 1}
     )
 
 
@@ -193,6 +191,8 @@ def execute_customer(state: dict, effect: EffectAttempt, identity: dict) -> Virt
             return denied()
         after = {**before, **copy.deepcopy(args["patch"]), "version": before["version"] + 1}
         grant = state["change_authorizations"].get(object_id, {})
+        if args["patch"] != grant.get("patch", {}):
+            return denied()
         if not patch_authorized(before, after, grant, identity, object_id):
             return denied()
         state["records"][object_id] = after

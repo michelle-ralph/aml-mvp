@@ -92,6 +92,7 @@ def main():
     parser.add_argument("--profile", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--trials", type=int, default=3)
+    parser.add_argument("--cases", nargs="+", choices=list(CASES), default=list(CASES))
     parser.add_argument("--api", default="http://localhost:8000")
     args = parser.parse_args()
     if args.trials < 1:
@@ -139,7 +140,7 @@ def main():
     )
     report["run_id"] = run["id"]
     save()
-    for case in CASES:
+    for case in args.cases:
         bundle = bankops_bundle(case, image, profile)
         (args.output / f"{case}.json").write_text(bundle.model_dump_json(indent=2) + "\n")
         registered = operator({"kind": "register", "bundle": bundle.model_dump(mode="json")})

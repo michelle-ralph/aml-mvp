@@ -5,7 +5,7 @@ from typing import Any, Protocol
 
 from .blue import BlueEngine
 from .contracts import AttackTask, EffectAttempt, PublicObservation, RedAction, StepResult
-from .observations import attacker_observation
+from .observations import attacker_observation, execution_status
 from .red_contracts import NoveltyConfig, RewardConfig
 from .target_adapter import TargetAdapter
 from .verifier import DeterministicVerifier, calculate_reward
@@ -154,6 +154,7 @@ class AgentEnvironment:
             terminal_success=terminal,
             done=done,
             private_evidence_ref=evidence_ref,
+            operator_execution_status=execution_status(observation),
         )
 
     def _novelty(self, action: RedAction, observation: PublicObservation) -> float:

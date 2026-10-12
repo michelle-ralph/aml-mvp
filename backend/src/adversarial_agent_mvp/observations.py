@@ -6,6 +6,19 @@ from typing import Any, Literal
 from .contracts import PublicObservation
 
 
+def execution_status(
+    observation: PublicObservation,
+) -> Literal["ok", "invalid_action", "target_error", "indeterminate"]:
+    """Classify trusted delivery evidence before removing it from Red's view."""
+    receipt = observation.delivery_receipt
+    status = receipt.status if receipt else None
+    if status == "delivery_unknown":
+        return "indeterminate"
+    if status in {"unsupported_surface", "malformed_action", "unavailable_slot", "target_rejected"}:
+        return "invalid_action"
+    return "target_error" if observation.visible_errors else "ok"
+
+
 def attacker_observation(
     observation: PublicObservation, mode: Literal["inherited", "black_box"]
 ) -> PublicObservation:

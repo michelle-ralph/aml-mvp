@@ -245,11 +245,8 @@ class ResearchSessionRunner:
                 self.complete(session_id, fence, command.id, {"error": "unexpected_episode_or_step"}, status="failed")
                 return
             result = await self.environment.step(RedAction.model_validate(command.payload["action"]))
-            receipt = result.public_observation.delivery_receipt
-            delivery_status = receipt.status if receipt else None
-            error = bool(result.public_observation.visible_errors)
-            invalid = delivery_status in {"unsupported_surface", "malformed_action", "unavailable_slot", "target_rejected"}
-            execution_status = "indeterminate" if delivery_status == "delivery_unknown" else "invalid_action" if invalid else "target_error" if error else "ok"
+            from .observations import execution_status as classify_execution
+            execution_status = result.operator_execution_status or classify_execution(result.public_observation)
             termination = "forbidden_state" if result.terminal_success else "target_terminated" if result.public_observation.terminated else None
             truncated = "step_limit" if not termination and self.environment.step_index >= task.max_steps_per_episode else None
             usage = self.repo.get_campaign(campaign.id)

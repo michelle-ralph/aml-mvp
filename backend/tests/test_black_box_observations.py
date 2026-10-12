@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -19,6 +19,52 @@ from adversarial_agent_mvp.storage import Database, Repository
 
 
 class BlackBoxTests(unittest.IsolatedAsyncioTestCase):
+    async def test_trusted_failure_status_survives_black_box_projection(self):
+        from adversarial_agent_mvp.bundle_smoke import open_bundle
+        from adversarial_agent_mvp.contracts import RedAction
+        from aml_target_protocol import DeliveryReceipt
+
+        async with open_bundle(bankops_bundle("C01", "sha256:" + "0" * 64)) as session:
+            env = session.environment
+            await env.reset(session.task)
+            # Real malformed delivery through the gateway, not a constructed label.
+            result = await env.step(RedAction(channel="user_message", payload={}))
+            self.assertEqual(result.operator_execution_status, "invalid_action")
+            self.assertIsNone(result.public_observation.delivery_receipt)
+            for status in (
+                "unsupported_surface",
+                "malformed_action",
+                "unavailable_slot",
+                "target_rejected",
+                "delivery_unknown",
+            ):
+                receipt = DeliveryReceipt(
+                    receipt_id="private-receipt",
+                    episode_id="private-episode",
+                    scenario_version_id="private-scenario",
+                    action_id=None,
+                    channel="user_message",
+                    status=status,
+                    applied=False,
+                    payload_sha256="0" * 64,
+                )
+                rich = PublicObservation(
+                    turn_number=1,
+                    visible_errors=["private failure detail"],
+                    delivery_receipt=receipt,
+                )
+                with patch.object(env.target, "invoke", new=AsyncMock(return_value=(rich, []))):
+                    result = await env.step(
+                        RedAction(channel="user_message", payload={"text": "test"})
+                    )
+                expected = "indeterminate" if status == "delivery_unknown" else "invalid_action"
+                self.assertEqual(result.operator_execution_status, expected)
+                self.assertIsNone(result.public_observation.delivery_receipt)
+                self.assertNotIn("operator_execution_status", result.model_dump(mode="json"))
+                public = json.dumps(result.public_observation.model_dump(mode="json"))
+                self.assertNotIn("private failure detail", public)
+                self.assertNotIn("private-receipt", public)
+
     async def test_registered_attacker_http_payload_is_black_box(self):
         from adversarial_agent_mvp.contracts import AttackTask
 

@@ -252,6 +252,9 @@ class StepResult(StrictModel):
     terminal_success: bool
     done: bool
     private_evidence_ref: str | None = None
+    operator_execution_status: (
+        Literal["ok", "invalid_action", "target_error", "indeterminate"] | None
+    ) = Field(default=None, exclude=True)
 
 
 class PublicEffectResponse(StrictModel):

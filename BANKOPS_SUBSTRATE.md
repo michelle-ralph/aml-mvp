@@ -654,3 +654,61 @@ research artifact or private bundle. This correction separates information paths
 existing access model; it does not introduce a new researcher/attacker ACL system. Scalar
 outcome/reward feedback and public objective/channels remain the declared benchmark contract.
 No full benchmark, new tasks, final splits, RL or scientific training were produced.
+
+## PR #2 review corrections (2026-10-12)
+
+Independent review found two defects missed by the earlier passing gates:
+
+1. S01 compared record fields with `dict.get`, conflating absent keys with null values.
+   `{country: IL, unapproved_field: null}` was accepted and its authoritative event was
+   incorrectly classified as authorized. Customer execution now requires the requested patch
+   to equal the trusted grant exactly, including its keys. The verifier compares the entire
+   after-record with the expected before-record plus permitted patch and version increment.
+   Added/removed null fields are violations. The validation oracle independently computes
+   added/removed keys and changed values instead of calling the service authorization predicate.
+2. The research worker classified delivery from the projected public receipt, which is correctly
+   absent in black-box mode. A malformed action therefore became `target_error`, and unknown
+   delivery lost its `indeterminate` classification. The environment now computes trusted
+   execution status before projection and carries it in `StepResult.operator_execution_status`.
+   This field is excluded from serialization; public observations still contain no rich receipts
+   or private failure detail. The research worker consumes the trusted status, with a compatible
+   observation-based fallback for legacy/custom environments.
+
+Regressions cover denied null-key and unchanged extra-field requests without world mutation;
+forged unauthorized null additions/removals detected by the verifier; independent state-oracle
+classification; real malformed gateway delivery; all five rejected/unknown delivery statuses;
+and absence of private status/receipt details from serialization. The existing authorized
+country correction, bank permissions, black-box feature projection and finance behavior remain.
+No benchmark expansion, learner/reward change or scientific training was performed.
+
+Fresh validation uses the rebuilt existing Docker control plane and the unchanged immutable
+reference target/profile from the strict-boundary gate. Evidence root:
+`backend/var/bankops-pr-review-fixes-20261012/`. The deployed failure-classification regression
+creates marked operator-only episodes; malformed user input and an absent tool slot now produce
+`invalid_action` with private `malformed_action`/`unavailable_slot` receipts and no compromise.
+Unknown delivery is covered by controlled gateway-result tests, not an induced Docker outage.
+`--cases S01` was added to the existing validation driver for targeted model reruns:
+
+```sh
+# From backend/, after rebuilding the existing API/worker deployment:
+.venv/bin/python scripts/validate_bankops.py \
+  --reference var/bankops-blackbox-20261012/reference.json \
+  --output var/bankops-pr-review-fixes-20261012/docker-fixture --trials 1
+.venv/bin/python scripts/validate_bankops.py \
+  --reference var/bankops-blackbox-20261012/reference.json \
+  --profile var/bankops-blackbox-20261012/inference-profile.json \
+  --output var/bankops-pr-review-fixes-20261012/docker-model-s01 --cases S01 --trials 3
+```
+
+Post-review results: **33 backend tests passed**, Ruff and Pyright passed, and
+`git diff --check` passed. Sixteen authority/boundary regressions passed inside the rebuilt
+Docker API. The fresh all-case fixture rerun passed **12/12** with benign completion **3/3**;
+its snapshot excluded all nine sanity episodes. The targeted real-model S01 rerun passed
+**6/6** with benign completion **3/3**; its snapshot excluded all three sanity episodes.
+Both paths retained deterministic learning reconstruction and private operator evidence.
+No required rerun failed or remained blocked. The original 18-trial model gate above is
+historical; after these corrections S01's six affected model trials were rerun, while all
+three scenarios were rerun in fixture mode. The two marked malformed-delivery diagnostics
+are additional operator tests, not benchmark or learning episodes. Reports, summary.json,
+failure-classification.json, source-manifest.json and docker-regression-tests.log are in
+this correction's evidence root. No credential values were found in the new artifacts.
