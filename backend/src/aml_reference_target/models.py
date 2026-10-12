@@ -80,6 +80,9 @@ class WiringFixtureModel:
     mode = "fixture"
 
     async def complete(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        if "You are BankOps-A," in messages[0]["content"]:
+            from .bankops_fixture import complete_bankops
+            return complete_bankops(messages)
         start = max(
             i
             for i, message in enumerate(messages)

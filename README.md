@@ -42,6 +42,7 @@ For the CPU learned-attacker training, checkpoint and evaluation loop, see
 [the learned attacker guide](LEARNED_ATTACKER.md).
 See [implementation status and Docker verification](LEARNED_ATTACKER_STATUS.md)
 for verified local and deployed end-to-end results.
+For the three-case banking development substrate, see [BankOps-A](BANKOPS_SUBSTRATE.md).
 See [UI smoke-test results](UI_TEST_STATUS.md) for browser validation and known usability issues.
 
 From `backend/`, use `docker compose logs -f api worker capsule-supervisor` to

@@ -10,7 +10,13 @@ import hashlib
 import json
 from typing import Any, Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 from sqlalchemy import select
 
 from aml_target_protocol import (
@@ -20,6 +26,7 @@ from aml_target_protocol import (
     validate_surface,
 )
 
+from .banking import validate_baseline
 from .contracts import (
     AttackChannel,
     AttackTask,
@@ -55,6 +62,7 @@ class ScenarioSurface(InterventionSurface):
 
 
 class PublicScenario(StrictModel):
+    observation_mode: Literal["inherited", "black_box"] = "inherited"
     scenario_id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,99}$")
     version: str = Field(min_length=1, max_length=80)
     family: str = Field(min_length=1, max_length=100)
@@ -66,8 +74,18 @@ class PublicScenario(StrictModel):
     surfaces: list[ScenarioSurface] = Field(min_length=1)
     allowed_operations: dict[str, list[str]]
 
+    @model_serializer(mode="wrap")
+    def serialize_policy(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        document = handler(self)
+        # Preserve legacy finance scenario hashes and re-registration behavior.
+        if self.observation_mode == "inherited":
+            document.pop("observation_mode", None)
+        return document
+
     @model_validator(mode="after")
     def unique_surfaces(self) -> PublicScenario:
+        if self.scenario_id.startswith("bankops-"):
+            object.__setattr__(self, "observation_mode", "black_box")
         if len({surface.channel for surface in self.surfaces}) != len(self.surfaces):
             raise ValueError("scenario surface channels must be unique")
         if not self.allowed_operations or any(not ops for ops in self.allowed_operations.values()):
@@ -99,9 +117,9 @@ class ScenarioGroundTruth(StrictModel):
         # Validate baseline shapes before a runtime is provisioned. Service-specific
         # record semantics belong to the operator's scenario and acceptance checks.
         required_maps = {
-            "payments": ("transactions", "approvals"),
-            "mail": ("messages",),
-            "customers": ("records",),
+            "payments": ("transactions", "approvals", "accounts", "ledger"),
+            "mail": ("messages", "protected_values", "disclosure_authorizations"),
+            "customers": ("records", "change_authorizations"),
             "memory": ("session", "persistent"),
             "files": ("files",),
         }
@@ -109,6 +127,7 @@ class ScenarioGroundTruth(StrictModel):
             for key, value in state.items():
                 if key not in required_maps[service] or not isinstance(value, dict):
                     raise ValueError(f"invalid baseline field {service}.{key}")
+        validate_baseline(self.initial_world_state)
         return self
 
 
@@ -264,6 +283,7 @@ class ScenarioCatalog:
                 )
             )
             task = AttackTask(
+                observation_mode=bundle.scenario.observation_mode,
                 target_version_id=version.id,
                 scenario_version_id=scenario_key,
                 objective=bundle.scenario.attack_objective,
@@ -397,8 +417,8 @@ class ScenarioCatalog:
             if (
                 content_hash(
                     {
-                        "public": public.model_dump(mode="json"),
-                        "private": ground.model_dump(mode="json"),
+                        "public": row.public_document,
+                        "private": row.private_document,
                     }
                 )
                 != row.content_hash
@@ -408,6 +428,7 @@ class ScenarioCatalog:
                 raise ValueError("scenario verifier rules cannot be overridden")
             if task.available_channels != [s.channel for s in public.surfaces]:
                 raise ValueError("scenario attack surfaces cannot be overridden")
+            task.observation_mode = public.observation_mode
             return ScenarioRuntime(
                 scenario_version_id=row.id,
                 initial_world_state=ground.initial_world_state,

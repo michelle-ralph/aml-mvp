@@ -171,7 +171,10 @@ def install_research_api(app: FastAPI, settings: Settings) -> None:
             session = db.scalar(select(ResearchSession).where(ResearchSession.campaign_id == episode.campaign_id)) if episode else None
             if session is None or session.owner_id != owner:
                 raise ResearchError("episode not found", 404)
-        return {"effects": [r.document for r in repository.list_effect_attempts(episode_id)],
+        return {"operator_observations": [r.payload for r in repository.list_events(
+                    aggregate_type="episode", aggregate_id=episode_id, limit=10000)
+                    if r.event_type == "OPERATOR_TARGET_OBSERVATION"],
+                "effects": [r.document for r in repository.list_effect_attempts(episode_id)],
                 "verifier_events": [r.document for r in repository.list_verifier_events(episode_id)]}
 
     @router.post("/research-runs", status_code=201)

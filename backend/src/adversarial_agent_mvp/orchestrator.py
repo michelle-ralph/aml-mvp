@@ -181,6 +181,7 @@ class RepositoryTrajectorySink(TrajectorySink):
             strategy_id=action.strategy_id,
             effects=effects,
             verifier_events=verifier_events,
+            operator_observations=trace.get("operator_observations", []),
             model_invocation_ids=trace.get("target_model_invocation_ids", []),
         )
 

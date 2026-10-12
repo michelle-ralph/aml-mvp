@@ -13,6 +13,7 @@ from typing import Any, Protocol
 import httpx
 
 from .contracts import AttackChannel, AttackTask, PublicObservation, RedAction, StrategyRecord
+from .observations import attacker_observation
 from .red_contracts import ModelConfig, ModelProvider, RankedAction, RedExperimentConfig
 
 
@@ -436,7 +437,7 @@ class OpenAICompatibleAttackerModel:
         return {
             "objective": context.task.objective,
             "available_channels": context.task.available_channels,
-            "observations": [item.model_dump(mode="json") for item in context.observations],
+            "observations": [attacker_observation(item, context.task.observation_mode).model_dump(mode="json") for item in context.observations],
             "prior_actions": [item.model_dump(mode="json") for item in context.actions],
             "strategies": [
                 {
