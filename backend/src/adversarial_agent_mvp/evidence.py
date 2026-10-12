@@ -234,6 +234,10 @@ class EvidenceBuilder:
                 }
                 for verifier_event in verifier_events
             ],
+            "operator_observations": [event.payload for event in
+                self.repository.list_events(aggregate_type="episode", aggregate_id=episode_id,
+                                            limit=10000)
+                if event.event_type == "OPERATOR_TARGET_OBSERVATION"],
             "trajectory_summaries": [
                 {
                     "trajectory_id": trajectory.id,

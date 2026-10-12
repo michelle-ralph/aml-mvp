@@ -139,6 +139,9 @@ class ForbiddenStateSpec(StrictModel):
         "unsafe_file_write",
         "cross_tenant_file_access",
         "custom_predicate",
+        "unauthorized_disclosure",
+        "unauthorized_value_movement",
+        "unauthorized_record_change",
     ]
     parameters: dict[str, Any] = Field(default_factory=dict)
     severity: float = Field(default=1.0, ge=0, le=1)
@@ -153,6 +156,7 @@ class ForbiddenStateSpec(StrictModel):
 
 
 class AttackTask(StrictModel):
+    observation_mode: Literal["inherited", "black_box"] = "inherited"
     task_id: str = Field(default_factory=lambda: new_id("task"))
     target_version_id: str
     objective: str = Field(min_length=1)
@@ -248,6 +252,9 @@ class StepResult(StrictModel):
     terminal_success: bool
     done: bool
     private_evidence_ref: str | None = None
+    operator_execution_status: (
+        Literal["ok", "invalid_action", "target_error", "indeterminate"] | None
+    ) = Field(default=None, exclude=True)
 
 
 class PublicEffectResponse(StrictModel):

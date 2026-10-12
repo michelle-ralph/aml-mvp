@@ -11,7 +11,8 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, Header, Request
 from sqlalchemy import select
 
-from .contracts import new_id
+from .contracts import PublicObservation, new_id
+from .observations import attacker_observation, model_input_generation
 from .research import (
     ADMIN_OWNER_ID,
     ResearchError,
@@ -23,8 +24,9 @@ from .research import (
 from .research_api import request_key
 from .research_contracts import DatasetCreate, UploadCreate
 from .research_storage import ArtifactUpload, EpisodeCommand, ResearchRecord, ResearchSession
-from .scenarios import content_hash
-from .storage import Artifact, Episode, WorkLease, utc_iso
+from .scenarios import PublicScenario, content_hash
+from .storage import Artifact, Episode, ScenarioVersionRow, WorkLease, utc_iso
+from .trajectory_eligibility import private_probe, sanity_episode
 
 
 def upload_view(row: ArtifactUpload) -> dict[str, Any]:
@@ -246,11 +248,31 @@ class DatasetRunner:
                 generations = [row for row in db.scalars(select(ResearchRecord).where(
                     ResearchRecord.kind == "generation", ResearchRecord.owner_id == dataset.owner_id,
                     ResearchRecord.created_at <= cutoff)) if row.document.get("session_id") in sessions]
+                private = {}
+                modes = {}
+                for sid, row in sessions.items():
+                    scenario = db.get(ScenarioVersionRow, row.document["scenario_version_id"])
+                    if scenario is None:
+                        raise ResearchError("dataset scenario is missing")
+                    private[sid] = scenario.private_document
+                    modes[sid] = PublicScenario.model_validate(scenario.public_document).observation_mode
+                commands = list(db.scalars(select(EpisodeCommand).where(
+                    EpisodeCommand.session_id.in_(sessions), EpisodeCommand.created_at <= cutoff)
+                    .order_by(EpisodeCommand.created_at, EpisodeCommand.id)))
+                excluded: set[str] = set()
+                for command in commands:
+                    eid = (command.result or {}).get("episode_id", command.payload.get("episode_id"))
+                    if eid and (sanity_episode(db, eid) or private_probe(command.payload.get("action"), private[command.session_id])):
+                        excluded.add(eid)
+                for row in sessions.values():
+                    if row.episode_id and sanity_episode(db, row.episode_id):
+                        excluded.add(row.episode_id)
+                generations = [g for g in generations if g.document.get("episode_id") not in excluded
+                    and not private_probe(g.document.get("parsed_action"), private[g.document["session_id"]])]
                 by_id = {g.id: g for g in generations}
                 records: list[dict[str, Any]] = []
                 used: set[str] = set()
-                for command in db.scalars(select(EpisodeCommand).where(EpisodeCommand.session_id.in_(sessions),
-                    EpisodeCommand.created_at <= cutoff).order_by(EpisodeCommand.created_at, EpisodeCommand.id)):
+                for command in commands:
                     session = sessions[command.session_id]
                     generation_id = command.payload.get("generation_id")
                     gen = by_id.get(generation_id) if generation_id else None
@@ -258,6 +280,8 @@ class DatasetRunner:
                         used.add(gen.id)
                     output = command.result if command.completed_at and command.completed_at.replace(tzinfo=UTC) <= cutoff else None
                     episode_id = (output or {}).get("episode_id", command.payload.get("episode_id"))
+                    if (episode_id or session.episode_id) in excluded:
+                        continue
                     episode = db.get(Episode, episode_id) if episode_id else None
                     lineage = {"operation_id": command.id, "session_id": session.id, "run_id": session.run_id,
                         "episode_id": episode_id,
@@ -268,11 +292,18 @@ class DatasetRunner:
                         "split": session.document["split"], "family": session.document["family"],
                         "seed": episode.seed if episode else (output or {}).get("seed", session.document["seed"]), "group_id": session.document["group_id"]}
                     generated = gen.document if gen else None
+                    if config["view"] == "model_input":
+                        generated = model_input_generation(generated, modes[session.id])
+                    public_observation = (output or {}).get("public_observation")
+                    if public_observation:
+                        public_observation = attacker_observation(
+                            PublicObservation.model_validate(public_observation), modes[session.id]
+                        ).model_dump(mode="json")
                     record = {"schema_version": "aml.dataset.v1", "lineage": lineage,
                         "status": command.status if output else "partial_at_snapshot", "kind": command.kind,
                         "provenance": command.payload.get("provenance"), "generation_id": generation_id,
                         "action": command.payload.get("action"),
-                        "public_observation": (output or {}).get("public_observation"),
+                        "public_observation": public_observation,
                         "generation": generated}
                     if config["view"] == "research":
                         record["research"] = {k: (output or {}).get(k) for k in ("outcome", "measurements", "baseline_reward", "usage")}
@@ -285,9 +316,12 @@ class DatasetRunner:
                         records.append({"schema_version": "aml.dataset.v1", "kind": "unexecuted_generation",
                             "lineage": {"run_id": gen.document.get("run_id"), "session_id": gen.document["session_id"],
                                 "episode_id": gen.document["episode_id"], "source_record_id": gen.id},
-                            "status": "unexecuted", "generation_id": gen.id, "generation": gen.document})
-                frozen = self.service.put_record(db, dataset.owner_id, "dataset_freeze", dataset_id, {"records": records})
+                            "status": "unexecuted", "generation_id": gen.id, "generation":
+                            model_input_generation(gen.document, modes[gen.document["session_id"]])
+                            if config["view"] == "model_input" else gen.document})
+                frozen = self.service.put_record(db, dataset.owner_id, "dataset_freeze", dataset_id, {"records": records, "excluded_sanity_episode_ids": sorted(excluded)})
             records = frozen.document["records"]
+            excluded_ids = frozen.document.get("excluded_sanity_episode_ids", [])
         with tempfile.TemporaryDirectory(prefix="aml-dataset-") as directory:
             path = Path(directory) / ("records." + config["format"])
             if config["format"] == "jsonl":
@@ -315,4 +349,4 @@ class DatasetRunner:
             self.service.put_record(db, dataset.owner_id, "dataset_result", dataset_id,
                 {"schema_version": "aml.dataset.v1", "artifact_id": stored.artifact_id,
                     "sha256": stored.sha256, "size_bytes": stored.size_bytes, "record_count": len(records),
-                    "filters": config, "freeze_hash": frozen.content_hash})
+                    "filters": config, "freeze_hash": frozen.content_hash, "excluded_sanity_episode_ids": excluded_ids})

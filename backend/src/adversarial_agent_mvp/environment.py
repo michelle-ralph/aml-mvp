@@ -5,6 +5,7 @@ from typing import Any, Protocol
 
 from .blue import BlueEngine
 from .contracts import AttackTask, EffectAttempt, PublicObservation, RedAction, StepResult
+from .observations import attacker_observation, execution_status
 from .red_contracts import NoveltyConfig, RewardConfig
 from .target_adapter import TargetAdapter
 from .verifier import DeterministicVerifier, calculate_reward
@@ -37,6 +38,7 @@ class AgentEnvironment:
         self._action_fingerprints: set[str] = set()
         self._observation_fingerprints: set[str] = set()
         self._private_trace: dict[str, Any] = {"events": [], "verifier": None}
+        self._operator_observations: list[dict[str, Any]] = []
 
     def configure_reward(self, config: RewardConfig) -> None:
         self.reward_config = config
@@ -69,7 +71,9 @@ class AgentEnvironment:
         self._pending_model_tokens = 0
         self._action_fingerprints.clear()
         self._observation_fingerprints.clear()
-        return await self.target.reset(task.random_seed)
+        observation = await self.target.reset(task.random_seed)
+        self._operator_observations = [{"phase": "reset", "observation": observation.model_dump(mode="json")}]
+        return attacker_observation(observation, task.observation_mode)
 
     async def step(self, action: RedAction) -> StepResult:
         if self.task is None:
@@ -119,6 +123,9 @@ class AgentEnvironment:
                 if terminal_signal and terminal_signal.evidence_refs
                 else None
             )
+        self._operator_observations.append({"phase": "step", "observation": observation.model_dump(mode="json")})
+        # Reward shaping continues to use the same operator observation; only
+        # the information crossing the Red boundary changes.
         novelty = self._novelty(action, observation)
         reward = calculate_reward(
             signals,
@@ -142,11 +149,12 @@ class AgentEnvironment:
             self._private_trace = {"events": audit_events, "verifier": verifier_trace}
         done = terminal or observation.terminated or self.turn >= self.task.max_steps_per_episode
         return StepResult(
-            public_observation=observation,
+            public_observation=attacker_observation(observation, self.task.observation_mode),
             reward=reward,
             terminal_success=terminal,
             done=done,
             private_evidence_ref=evidence_ref,
+            operator_execution_status=execution_status(observation),
         )
 
     def _novelty(self, action: RedAction, observation: PublicObservation) -> float:
@@ -174,6 +182,8 @@ class AgentEnvironment:
 
     def drain_private_trace(self) -> dict[str, Any]:
         trace = self._private_trace
+        trace["operator_observations"] = self._operator_observations
+        self._operator_observations = []
         self._private_trace = {"events": [], "verifier": None}
         return trace
 

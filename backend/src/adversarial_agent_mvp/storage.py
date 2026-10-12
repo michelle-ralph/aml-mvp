@@ -1354,6 +1354,7 @@ class Repository:
         model_invocation_ids: list[str] | None = None,
         effects: list[dict[str, Any]] | None = None,
         verifier_events: list[dict[str, Any]] | None = None,
+        operator_observations: list[dict[str, Any]] | None = None,
     ) -> EpisodeStep:
         """Append one complete causal step in a single database transaction.
 
@@ -1385,6 +1386,9 @@ class Repository:
                 raise KeyError("campaign not found")
             session.add(step)
             session.flush()
+            for operator_observation in operator_observations or []:
+                self._append_event(session, "episode", episode_id, "OPERATOR_TARGET_OBSERVATION",
+                                   {"step_id": step_id, **jsonable(operator_observation)})
             if model_invocation:
                 invocation = ModelInvocation(
                     id=str(invocation_id),

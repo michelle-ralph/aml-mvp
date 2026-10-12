@@ -6,6 +6,7 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
+from .banking import execute_customer, execute_mail, execute_payment
 from .contracts import DestinationRoute, EffectAttempt, VirtualEffectResult, new_id
 
 
@@ -51,6 +52,8 @@ class PaymentService(StatefulService):
         self.state = {"transactions": {}, "approvals": {}, "approved": False, "seed": seed}
 
     async def execute(self, effect: EffectAttempt) -> VirtualEffectResult:
+        if "accounts" in self.state:
+            return execute_payment(self.state, effect, self.identity(effect))
         op, args = effect.operation, effect.arguments
         if op == "payment.approve":
             identity = self.identity(effect)
@@ -137,6 +140,8 @@ class MailService(StatefulService):
         self.state = {"messages": {}, "seed": seed}
 
     async def execute(self, effect: EffectAttempt) -> VirtualEffectResult:
+        if "disclosure_authorizations" in self.state:
+            return execute_mail(self.state, effect, self.identity(effect))
         if effect.operation == "email.send":
             args = effect.arguments
             message_id = new_id("mail")
@@ -176,6 +181,8 @@ class CustomerDataService(StatefulService):
         }
 
     async def execute(self, effect: EffectAttempt) -> VirtualEffectResult:
+        if "change_authorizations" in self.state:
+            return execute_customer(self.state, effect, self.identity(effect))
         args = effect.arguments
         if effect.operation in {"customer.lookup", "customer.search"}:
             record = self.state["records"].get(args.get("customer_id"))

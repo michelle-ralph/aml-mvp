@@ -11,8 +11,11 @@ from sqlalchemy import select
 
 from ..contracts import AttackTask, PublicObservation, RedAction
 from ..models import AttackContext
+from ..observations import attacker_observation
 from ..red_contracts import FrozenModel
+from ..scenarios import PublicScenario
 from ..storage import OperationalEvent, Repository, ScenarioVersionRow
+from ..trajectory_eligibility import private_probe, sanity_episode
 from .features import PublicAction, PublicState, canonical, project
 
 
@@ -126,6 +129,8 @@ def build_dataset(repository: Repository, campaign_ids: list[str]) -> list[Train
             scenario_id = scenario.scenario_id
             scenario_version_id = scenario.id
             split = cast(Literal["train", "development", "validation"], scenario.split)
+            private_document = scenario.private_document
+            task.observation_mode = PublicScenario.model_validate(scenario.public_document).observation_mode
         for episode in sorted(repository.list_episodes(campaign_id), key=lambda e: e.id):
             if episode.status not in {"SUCCEEDED", "EXHAUSTED", "DESTROYED"} or episode.error:
                 raise ValueError(f"episode is not a clean completed trajectory: {episode.id}")
@@ -138,11 +143,14 @@ def build_dataset(repository: Repository, campaign_ids: list[str]) -> list[Train
                         )
                     )
                 )
+            with repository.db.session() as db:
+                if sanity_episode(db, episode.id):
+                    raise ValueError("verifier-sanity trajectories cannot enter learning datasets")
             if len(resets) != 1:
                 raise ValueError(f"episode requires exactly one persisted reset: {episode.id}")
             reset = resets[0].payload
             context = AttackContext(
-                task, [PublicObservation.model_validate(reset["observation"])], [], []
+                task, [attacker_observation(PublicObservation.model_validate(reset["observation"]), task.observation_mode)], [], []
             )
             loaded = repository.get_episode(episode.id)
             assert loaded is not None
@@ -168,6 +176,9 @@ def build_dataset(repository: Repository, campaign_ids: list[str]) -> list[Train
                 ):
                     raise ValueError("ambiguous/failed execution cannot become a training label")
                 action = RedAction.model_validate(step.red_action)
+                observation = attacker_observation(observation, task.observation_mode)
+                if private_probe(action.model_dump(mode="json"), private_document):
+                    raise ValueError("private known-attack sanity fixtures cannot enter learning datasets")
                 before = project(context)
                 context.actions.append(action)
                 context.observations.append(observation)

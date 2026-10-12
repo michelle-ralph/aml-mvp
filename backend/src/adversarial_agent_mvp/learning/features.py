@@ -12,6 +12,7 @@ from pydantic import Field, model_validator
 
 from ..contracts import AttackChannel, PublicObservation, RedAction
 from ..models import AttackContext
+from ..observations import attacker_observation
 from ..red_contracts import FrozenModel
 
 FEATURE_VERSION = "aml.learning.features.v1"
@@ -70,7 +71,7 @@ def project(context: AttackContext) -> PublicState:
     return PublicState(
         objective=context.task.objective,
         available_channels=tuple(context.task.available_channels),
-        observations=tuple(public_observation(o) for o in context.observations),
+        observations=tuple(public_observation(attacker_observation(o, context.task.observation_mode)) for o in context.observations),
         actions=tuple(PublicAction.project(a) for a in context.actions),
     )
 
